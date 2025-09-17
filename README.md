@@ -268,51 +268,24 @@ dbutils.fs.ls("/Workspace/Users/your-email@company.com/notebooks")
 /Volumes/dev/workspace/converted_files/
 ```
 
-## Directory Copy Utility
+## Flat Directory Structure
 
-The repository includes `copy_dir.py`, a utility script that helps copy directories while handling filename conflicts (when a file has the same name as its parent folder).
+The converter now creates all output files in a **flat directory structure** with folder paths encoded in the filenames. This eliminates nesting issues and makes file management much simpler.
 
-### Usage
+### Filename Encoding Examples
 
-```bash
-# Basic usage
-python copy_dir.py <source_folder> <destination_folder>
+| Original Path | Output Filename |
+|---------------|----------------|
+| `samples/Python Tutorial/IPython Basic.zpln` | `Python Tutorial_IPython Basic.py` |
+| `samples/Flink Tutorial/Streaming ETL.zpln` | `Flink Tutorial_Streaming ETL.py` |
+| `samples/R Tutorial/Basics.zpln` | `R Tutorial_Basics.py` |
 
-# Copy with error handling (continue on errors)
-python copy_dir.py ./converted_notebooks ./backup_notebooks
+### Benefits
 
-# Stop on first error
-python copy_dir.py ./source ./dest --no-skip
-```
-
-### Features
-
-- **Conflict Resolution**: Automatically renames files that match their parent folder name
-- **Structure Preservation**: Maintains directory hierarchy during copy
-- **Error Handling**: Optional skip-on-error mode for robust batch operations
-- **Progress Tracking**: Shows each file copied with full paths
-
-### Example Output
-
-```bash
-python copy_dir.py ./converted_notebooks ./workspace_backup
-
-Copied: ./converted_notebooks/Python Tutorial/basics.py -> ./workspace_backup/Python Tutorial/basics.py
-Copied: ./converted_notebooks/Python Tutorial/Python Tutorial.scala -> ./workspace_backup/Python Tutorial/Python Tutorial_file.scala
-Copied: ./converted_notebooks/Flink Tutorial/streaming.sql -> ./workspace_backup/Flink Tutorial/streaming.sql
-```
-
-### Integration with Converter
-
-Use both tools together for a complete migration workflow:
-
-```bash
-# Step 1: Convert Zeppelin notebooks
-python zeppelin_converter.py --directory ./zeppelin_notebooks --out_dir ./converted_notebooks
-
-# Step 2: Copy to another location with conflict resolution
-python copy_dir.py ./converted_notebooks ./final_destination
-```
+- **No Directory Conflicts**: All files in single output directory
+- **Databricks Compatible**: Perfect for workspace imports
+- **Easy File Management**: Simple copying, moving, and organization
+- **Path Preservation**: Original structure encoded in filenames
 
 ## Security Notice
 

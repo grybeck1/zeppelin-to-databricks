@@ -181,45 +181,76 @@ def resolve_filename_conflicts(output_path: str) -> str:
     return output_path
 
 def generate_output_path(input_file: str, output_dir: str, source_dir: str, language: str, name: str) -> str:
-    """Generate output file path with FUSE-compatible sanitization and conflict resolution"""
+    """Generate flat output file path with folder path encoded in filename"""
     extension = FILE_EXTENSIONS.get(language, '.py')
     
-    # Comprehensive filename sanitization for FUSE compatibility
+    # Get the relative directory path to encode in filename
+    folder_path = ""
+    if source_dir:
+        rel_dir = os.path.dirname(os.path.relpath(input_file, source_dir))
+        if rel_dir and rel_dir != '.':
+            # Replace path separators with underscores and sanitize
+            folder_path = rel_dir.replace(os.sep, '_').replace('/', '_').replace('\\', '_')
+            folder_path = sanitize_path_component(folder_path)
+            folder_path += '_'
+    else:
+        # For single files, still encode the parent directory name if it exists
+        parent_dir = os.path.basename(os.path.dirname(input_file))
+        if parent_dir and parent_dir not in ['.', '..', os.path.basename(os.getcwd())]:
+            folder_path = sanitize_path_component(parent_dir) + '_'
+    
+    # Sanitize the notebook name
     if name:
-        safe_name = name
-        # Replace ALL problematic characters for FUSE/network filesystems
-        problematic_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\t', '\n', '\r']
-        for char in problematic_chars:
-            safe_name = safe_name.replace(char, '_')
-        # Remove any remaining control characters
-        safe_name = ''.join(c if ord(c) >= 32 and c not in problematic_chars else '_' for c in safe_name)
-        safe_name = ' '.join(safe_name.split())  # Normalize whitespace
-        safe_name = safe_name.strip('. ')  # Remove problematic leading/trailing chars
-        if len(safe_name) > 200:
-            safe_name = safe_name[:200].strip('. ')
+        safe_name = sanitize_path_component(name)
         if not safe_name or safe_name in ['.', '..']:
             safe_name = 'unnamed_notebook'
     else:
         safe_name = 'unnamed_notebook'
     
-    if not safe_name.endswith(extension):
-        safe_name += extension
+    # Combine folder path and filename
+    final_filename = folder_path + safe_name
     
+    # Ensure reasonable length (filesystem limits)
+    if len(final_filename) > 200:
+        # Truncate but preserve some of the original name
+        truncated_folder = folder_path[:100] if len(folder_path) > 100 else folder_path
+        remaining_length = 200 - len(truncated_folder) - len(extension)
+        if remaining_length > 10:  # Keep at least 10 chars of original name
+            safe_name = safe_name[:remaining_length]
+        final_filename = truncated_folder + safe_name
+    
+    if not final_filename.endswith(extension):
+        final_filename += extension
+    
+    # Generate output path (always flat - just output_dir + filename)
     if output_dir:
-        # Normalize and resolve paths for FUSE
         output_dir = os.path.abspath(os.path.expanduser(output_dir))
-        if source_dir:
-            rel_dir = os.path.dirname(os.path.relpath(input_file, source_dir))
-            output_path = os.path.join(output_dir, rel_dir, safe_name) if rel_dir != '.' else os.path.join(output_dir, safe_name)
-        else:
-            output_path = os.path.join(output_dir, safe_name)
+        output_path = os.path.join(output_dir, final_filename)
     else:
-        output_path = os.path.join(os.path.dirname(input_file), safe_name)
+        output_path = os.path.join(os.path.dirname(input_file), final_filename)
     
-    # Resolve filename conflicts with existing directories
+    # Resolve filename conflicts (now only file conflicts, no directory conflicts)
     output_path = resolve_filename_conflicts(output_path)
     
     return os.path.normpath(output_path)
+
+def sanitize_path_component(component: str) -> str:
+    """Sanitize a path component for use in filename"""
+    if not component:
+        return ""
+    
+    # Replace ALL problematic characters for FUSE/network filesystems
+    problematic_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\t', '\n', '\r']
+    safe_component = component
+    for char in problematic_chars:
+        safe_component = safe_component.replace(char, '_')
+    
+    # Remove any remaining control characters
+    safe_component = ''.join(c if ord(c) >= 32 and c not in problematic_chars else '_' for c in safe_component)
+    safe_component = ' '.join(safe_component.split())  # Normalize whitespace
+    safe_component = safe_component.strip('. ')  # Remove problematic leading/trailing chars
+    
+    return safe_component
 
 def process_single_file(file_path: str, default_language: str, output_dir: str = None, source_dir: str = None, skip_old_days: int = None) -> Tuple[bool, str, Counter]:
     """Process a single notebook file"""
@@ -271,10 +302,10 @@ def process_single_file(file_path: str, default_language: str, output_dir: str =
             if actual_filename != expected_filename:
                 conflict_resolved = True
         
-        # Write file with FUSE-compatible approach
-        output_dir = os.path.dirname(output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        # Create output directory (flat structure - only the main output dir)
+        output_dir_only = os.path.dirname(output_path)
+        if output_dir_only:
+            os.makedirs(output_dir_only, exist_ok=True)
         
         # Remove existing file if it exists for proper overwriting
         if os.path.exists(output_path):
