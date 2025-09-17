@@ -114,8 +114,74 @@ def find_notebook_files(directory: str, ignore_dirs: List[str] = None) -> List[s
                 files.append(file_path)
     return sorted(set(files))
 
+def resolve_filename_conflicts(output_path: str) -> str:
+    """Resolve conflicts when filename matches existing directory name"""
+    if not os.path.exists(output_path):
+        return output_path
+    
+    # If path exists and is a directory, we have a conflict
+    if os.path.isdir(output_path):
+        # Extract directory, base name, and extension
+        directory = os.path.dirname(output_path)
+        filename = os.path.basename(output_path)
+        name, ext = os.path.splitext(filename)
+        
+        # Try different naming strategies
+        conflict_resolved = False
+        counter = 1
+        
+        # Strategy 1: Add "_notebook" suffix
+        new_filename = f"{name}_notebook{ext}"
+        new_path = os.path.join(directory, new_filename)
+        if not os.path.exists(new_path):
+            return new_path
+        
+        # Strategy 2: Add "_file" suffix
+        new_filename = f"{name}_file{ext}"
+        new_path = os.path.join(directory, new_filename)
+        if not os.path.exists(new_path):
+            return new_path
+        
+        # Strategy 3: Add incremental numbers
+        while not conflict_resolved and counter <= 999:
+            new_filename = f"{name}_{counter:03d}{ext}"
+            new_path = os.path.join(directory, new_filename)
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
+        
+        # Fallback: Use timestamp if all else fails
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_filename = f"{name}_{timestamp}{ext}"
+        new_path = os.path.join(directory, new_filename)
+        return new_path
+    
+    # If it's a file conflict, try incremental naming
+    elif os.path.isfile(output_path):
+        directory = os.path.dirname(output_path)
+        filename = os.path.basename(output_path)
+        name, ext = os.path.splitext(filename)
+        
+        counter = 1
+        while counter <= 999:
+            new_filename = f"{name}_{counter:03d}{ext}"
+            new_path = os.path.join(directory, new_filename)
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
+        
+        # Fallback with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_filename = f"{name}_{timestamp}{ext}"
+        new_path = os.path.join(directory, new_filename)
+        return new_path
+    
+    return output_path
+
 def generate_output_path(input_file: str, output_dir: str, source_dir: str, language: str, name: str) -> str:
-    """Generate output file path with FUSE-compatible sanitization"""
+    """Generate output file path with FUSE-compatible sanitization and conflict resolution"""
     extension = FILE_EXTENSIONS.get(language, '.py')
     
     # Comprehensive filename sanitization for FUSE compatibility
@@ -150,6 +216,9 @@ def generate_output_path(input_file: str, output_dir: str, source_dir: str, lang
     else:
         output_path = os.path.join(os.path.dirname(input_file), safe_name)
     
+    # Resolve filename conflicts with existing directories
+    output_path = resolve_filename_conflicts(output_path)
+    
     return os.path.normpath(output_path)
 
 def process_single_file(file_path: str, default_language: str, output_dir: str = None, source_dir: str = None, skip_old_days: int = None) -> Tuple[bool, str, Counter]:
@@ -179,8 +248,28 @@ def process_single_file(file_path: str, default_language: str, output_dir: str =
         # Convert notebook
         content_lines, interpreter_stats = convert_notebook(notebook_data['json'], default_language)
         
-        # Generate output path
-        output_path = generate_output_path(file_path, output_dir, source_dir, default_language, notebook_data['name'])
+        # Generate output path (with conflict resolution if needed)
+        original_name = notebook_data['name']
+        output_path = generate_output_path(file_path, output_dir, source_dir, default_language, original_name)
+        
+        # Check if filename was changed due to conflict resolution
+        conflict_resolved = False
+        if original_name:
+            # Sanitize the original name the same way as in generate_output_path
+            safe_original = original_name
+            problematic_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\t', '\n', '\r']
+            for char in problematic_chars:
+                safe_original = safe_original.replace(char, '_')
+            safe_original = ''.join(c if ord(c) >= 32 and c not in problematic_chars else '_' for c in safe_original)
+            safe_original = ' '.join(safe_original.split())
+            safe_original = safe_original.strip('. ')
+            if not safe_original:
+                safe_original = 'unnamed_notebook'
+            
+            expected_filename = safe_original + FILE_EXTENSIONS.get(default_language, '.py')
+            actual_filename = os.path.basename(output_path)
+            if actual_filename != expected_filename:
+                conflict_resolved = True
         
         # Write file with FUSE-compatible approach
         output_dir = os.path.dirname(output_path)
@@ -201,7 +290,10 @@ def process_single_file(file_path: str, default_language: str, output_dir: str =
             f.flush()
             os.fsync(f.fileno())  # Force write to disk for FUSE
         
-        return True, f"Successfully converted to {output_path}", interpreter_stats
+        success_message = f"Successfully converted to {output_path}"
+        if conflict_resolved:
+            success_message += " (filename conflict resolved)"
+        return True, success_message, interpreter_stats
     except Exception as e:
         return False, str(e), empty_stats
 
